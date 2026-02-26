@@ -550,7 +550,14 @@ CREATE TABLE IF NOT EXISTS score_runs (
 	error_msg   TEXT
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_news_items_url_unique ON news_items(url);
+-- Deduplicate before adding uniqueness on URL to avoid migration failures.
+DELETE FROM news_items a
+USING news_items b
+WHERE a.id > b.id
+  AND a.url IS NOT NULL
+  AND a.url = b.url;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_news_items_url_unique ON news_items(url) WHERE url IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_score_runs_horizon_started ON score_runs(horizon, started_at DESC);
 
 ALTER TABLE score_runs ADD COLUMN IF NOT EXISTS stage TEXT DEFAULT 'init';
