@@ -3,7 +3,7 @@ import ScoreBar from "@/components/ScoreBar";
 import Link from "next/link";
 
 interface Props {
-  params: { horizon: Horizon; symbol: string };
+  params: Promise<{ horizon: Horizon; symbol: string }>;
 }
 
 const horizonWeights: Record<Horizon, Record<string, string>> = {
@@ -13,14 +13,15 @@ const horizonWeights: Record<Horizon, Record<string, string>> = {
 };
 
 export default async function TickerDetail({ params }: Props) {
+  const { horizon, symbol } = await params;
   let ticker;
   try {
-    const res = await api.ticker(params.horizon, params.symbol.toUpperCase());
+    const res = await api.ticker(horizon, symbol.toUpperCase());
     ticker = res.ticker;
   } catch {
     return (
       <div className="text-center py-20 text-gray-500">
-        <p className="text-lg">Ticker not found in {params.horizon} watchlist.</p>
+        <p className="text-lg">Ticker not found in {horizon} watchlist.</p>
         <Link href="/" className="text-blue-400 text-sm mt-2 inline-block hover:underline">← Back to dashboard</Link>
       </div>
     );
@@ -28,7 +29,7 @@ export default async function TickerDetail({ params }: Props) {
 
   const flags = parseFlags(ticker.flags);
   const gaps = parseDataGaps(ticker.data_gaps);
-  const weights = horizonWeights[params.horizon];
+  const weights = horizonWeights[horizon];
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
@@ -36,7 +37,7 @@ export default async function TickerDetail({ params }: Props) {
       <div className="flex items-center gap-2 text-sm text-gray-500">
         <Link href="/" className="hover:text-white transition">Dashboard</Link>
         <span>/</span>
-        <span className="capitalize">{params.horizon}</span>
+        <span className="capitalize">{horizon}</span>
         <span>/</span>
         <span className="text-white font-bold">{ticker.ticker}</span>
       </div>
@@ -52,7 +53,7 @@ export default async function TickerDetail({ params }: Props) {
             {ticker.risk_rating} RISK
           </span>
           <span className="text-xs bg-gray-800 px-3 py-1.5 rounded">
-            Rank #{ticker.rank} · {params.horizon.toUpperCase()}
+            Rank #{ticker.rank} · {horizon.toUpperCase()}
           </span>
         </div>
       </div>
