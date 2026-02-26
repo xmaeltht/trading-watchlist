@@ -99,6 +99,10 @@ func computeConfidence(t *TickerInput) (float64, []string) {
 		score -= 10
 		gaps = append(gaps, "insufficient_price_history")
 	}
+	if t.LatestBarAgeDays > 2 {
+		score -= 10
+		gaps = append(gaps, "stale_price_data")
+	}
 	if len(t.PriceBars) < 50 {
 		score -= 15
 		gaps = append(gaps, "very_limited_price_data")
@@ -109,11 +113,19 @@ func computeConfidence(t *TickerInput) (float64, []string) {
 		score -= 20
 		gaps = append(gaps, "no_fundamentals")
 	}
+	if t.HasFundamentals && t.FundamentalsAgeDays > 30 {
+		score -= 8
+		gaps = append(gaps, "stale_fundamentals")
+	}
 
 	// News
 	if t.NewsCount7d == 0 {
 		score -= 10
 		gaps = append(gaps, "no_recent_news")
+	}
+	if t.LatestNewsAgeDays > 3 {
+		score -= 8
+		gaps = append(gaps, "stale_news")
 	}
 
 	// IV data
@@ -132,6 +144,11 @@ func computeConfidence(t *TickerInput) (float64, []string) {
 	if t.EarningsDaysAway < 0 {
 		score -= 5
 		gaps = append(gaps, "unknown_earnings_date")
+	}
+
+	if t.Sector == "" || t.Sector == "Unknown" {
+		score -= 5
+		gaps = append(gaps, "unknown_sector")
 	}
 
 	if score < 10 {

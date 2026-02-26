@@ -18,13 +18,13 @@ const (
 
 // TickerScore holds the full scored record for a ticker on a given horizon and run.
 type TickerScore struct {
-	ID          int64     `db:"id"`
-	RunID       string    `db:"run_id"`
-	Horizon     Horizon   `db:"horizon"`
-	Ticker      string    `db:"ticker"`
-	CompanyName string    `db:"company_name"`
-	Sector      string    `db:"sector"`
-	Rank        int       `db:"rank"`
+	ID             int64   `db:"id"`
+	RunID          string  `db:"run_id"`
+	Horizon        Horizon `db:"horizon"`
+	Ticker         string  `db:"ticker"`
+	CompanyName    string  `db:"company_name"`
+	Sector         string  `db:"sector"`
+	Rank           int     `db:"rank"`
 	CompositeScore float64 `db:"composite_score"`
 
 	// Sub-scores (0–100)
@@ -40,16 +40,16 @@ type TickerScore struct {
 	DataGaps        string  `db:"data_gaps"` // JSON array of missing fields
 
 	// Generated content
-	Thesis          string `db:"thesis"`          // LLM-generated markdown bullets
-	TradePlanText   string `db:"trade_plan_text"` // LLM-generated template
+	Thesis           string `db:"thesis"`          // LLM-generated markdown bullets
+	TradePlanText    string `db:"trade_plan_text"` // LLM-generated template
 	InvalidationText string `db:"invalidation_text"`
-	RiskRating      string `db:"risk_rating"` // LOW | MEDIUM | HIGH
-	Flags           string `db:"flags"`       // JSON array of flag strings
+	RiskRating       string `db:"risk_rating"` // LOW | MEDIUM | HIGH
+	Flags            string `db:"flags"`       // JSON array of flag strings
 
 	// Raw signals (stored as JSON for flexibility)
-	TechnicalSnapshot  string `db:"technical_snapshot"`  // JSON
+	TechnicalSnapshot   string `db:"technical_snapshot"`   // JSON
 	FundamentalSnapshot string `db:"fundamental_snapshot"` // JSON
-	NewsSummary        string `db:"news_summary"`        // JSON
+	NewsSummary         string `db:"news_summary"`         // JSON
 
 	CreatedAt time.Time `db:"created_at"`
 }
@@ -93,6 +93,15 @@ type Fundamentals struct {
 	FCFYield         float64   `db:"fcf_yield"`
 	EPSRevisions30d  int       `db:"eps_revisions_30d"`
 	UpdatedAt        time.Time `db:"updated_at"`
+}
+
+type CompanyProfile struct {
+	Ticker      string    `db:"ticker"`
+	CompanyName string    `db:"company_name"`
+	Sector      string    `db:"sector"`
+	Industry    string    `db:"industry"`
+	Source      string    `db:"source"`
+	UpdatedAt   time.Time `db:"updated_at"`
 }
 
 // Store wraps the database connection pool.
@@ -284,6 +293,34 @@ func (s *Store) SaveFundamentals(ctx context.Context, f Fundamentals) error {
 	return err
 }
 
+func (s *Store) SaveCompanyProfile(ctx context.Context, p CompanyProfile) error {
+	_, err := s.db.Exec(ctx, `
+		INSERT INTO company_profiles (ticker, company_name, sector, industry, source, updated_at)
+		VALUES ($1,$2,$3,$4,$5,NOW())
+		ON CONFLICT (ticker) DO UPDATE SET
+			company_name = EXCLUDED.company_name,
+			sector = EXCLUDED.sector,
+			industry = EXCLUDED.industry,
+			source = EXCLUDED.source,
+			updated_at = NOW()`,
+		p.Ticker, p.CompanyName, p.Sector, p.Industry, p.Source,
+	)
+	return err
+}
+
+func (s *Store) GetCompanyProfile(ctx context.Context, ticker string) (*CompanyProfile, error) {
+	var p CompanyProfile
+	err := s.db.QueryRow(ctx, `
+		SELECT ticker, company_name, sector, industry, source, updated_at
+		FROM company_profiles
+		WHERE ticker = $1`, ticker,
+	).Scan(&p.Ticker, &p.CompanyName, &p.Sector, &p.Industry, &p.Source, &p.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
 // SaveNewsItem inserts a single news item, ignoring duplicates by URL.
 func (s *Store) SaveNewsItem(ctx context.Context, n NewsItem) error {
 	_, err := s.db.Exec(ctx, `
@@ -319,6 +356,99 @@ func (s *Store) GetRecentNews(ctx context.Context, ticker string, limit int) ([]
 		items = append(items, n)
 	}
 	return items, rows.Err()
+}
+
+func (s *Store) GetFundamentals(ctx context.Context, ticker string) (*Fundamentals, error) {
+	var f Fundamentals
+	err := s.db.QueryRow(ctx, `
+		SELECT ticker, revenue_growth_yoy, eps_growth_yoy, gross_margin,
+		       operating_margin, pe_forward, peg_ratio, ev_to_ebitda,
+		       debt_to_equity, fcf_yield, eps_revisions_30d, updated_at
+		FROM fundamentals
+		WHERE ticker = $1`, ticker,
+	).Scan(
+		&f.Ticker, &f.RevenueGrowthYoY, &f.EPSGrowthYoY, &f.GrossMargin,
+		&f.OperatingMargin, &f.PEForward, &f.PEGRatio, &f.EVToEBITDA,
+		&f.DebtToEquity, &f.FCFYield, &f.EPSRevisions30d, &f.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &f, nil
+}
+
+type RunStatus struct {
+	ID          string     `json:"id"`
+	Horizon     string     `json:"horizon"`
+	Status      string     `json:"status"`
+	Stage       string     `json:"stage"`
+	Processed   int        `json:"processed"`
+	Total       int        `json:"total"`
+	TickerCount int        `json:"ticker_count"`
+	StartedAt   time.Time  `json:"started_at"`
+	FinishedAt  *time.Time `json:"finished_at,omitempty"`
+	LastUpdate  time.Time  `json:"last_update"`
+	ErrorMsg    string     `json:"error_msg,omitempty"`
+}
+
+func (s *Store) CreateRun(ctx context.Context, id, horizon string, total int) error {
+	_, err := s.db.Exec(ctx, `
+		INSERT INTO score_runs (id, horizon, status, stage, processed, total, ticker_count, started_at, last_update)
+		VALUES ($1,$2,'running','init',0,$3,0,NOW(),NOW())
+		ON CONFLICT (id) DO NOTHING`,
+		id, horizon, total,
+	)
+	return err
+}
+
+func (s *Store) UpdateRunProgress(ctx context.Context, id, stage string, processed int) error {
+	_, err := s.db.Exec(ctx, `
+		UPDATE score_runs
+		SET stage = $2, processed = $3, last_update = NOW()
+		WHERE id = $1`, id, stage, processed,
+	)
+	return err
+}
+
+func (s *Store) CompleteRun(ctx context.Context, id string, tickerCount int, errMsg string) error {
+	status := "success"
+	if errMsg != "" {
+		status = "failed"
+	}
+	_, err := s.db.Exec(ctx, `
+		UPDATE score_runs
+		SET status = $2, ticker_count = $3, error_msg = $4, stage = 'done', finished_at = NOW(), last_update = NOW()
+		WHERE id = $1`,
+		id, status, tickerCount, errMsg,
+	)
+	return err
+}
+
+func (s *Store) GetRun(ctx context.Context, id string) (*RunStatus, error) {
+	var r RunStatus
+	err := s.db.QueryRow(ctx, `
+		SELECT id, horizon, status, stage, processed, total, ticker_count, started_at, finished_at, last_update, COALESCE(error_msg,'')
+		FROM score_runs WHERE id = $1`, id,
+	).Scan(&r.ID, &r.Horizon, &r.Status, &r.Stage, &r.Processed, &r.Total, &r.TickerCount, &r.StartedAt, &r.FinishedAt, &r.LastUpdate, &r.ErrorMsg)
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+func (s *Store) LatestRunByHorizon(ctx context.Context, horizon Horizon) (*RunStatus, error) {
+	var r RunStatus
+	err := s.db.QueryRow(ctx, `
+		SELECT id, horizon, status, stage, processed, total, ticker_count, started_at, finished_at, last_update, COALESCE(error_msg,'')
+		FROM score_runs
+		WHERE horizon = $1
+		ORDER BY started_at DESC
+		LIMIT 1`, horizon,
+	).Scan(&r.ID, &r.Horizon, &r.Status, &r.Stage, &r.Processed, &r.Total, &r.TickerCount, &r.StartedAt, &r.FinishedAt, &r.LastUpdate, &r.ErrorMsg)
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
 }
 
 var schema = `
@@ -364,6 +494,15 @@ CREATE TABLE IF NOT EXISTS news_items (
 	created_at   TIMESTAMPTZ DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS company_profiles (
+	ticker       TEXT PRIMARY KEY,
+	company_name TEXT,
+	sector       TEXT,
+	industry     TEXT,
+	source       TEXT DEFAULT 'alpha_vantage',
+	updated_at   TIMESTAMPTZ DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS idx_news_ticker_published ON news_items(ticker, published_at DESC);
 
 CREATE TABLE IF NOT EXISTS ticker_scores (
@@ -398,12 +537,24 @@ CREATE TABLE IF NOT EXISTS ticker_scores (
 CREATE INDEX IF NOT EXISTS idx_scores_horizon_run ON ticker_scores(horizon, run_id DESC);
 
 CREATE TABLE IF NOT EXISTS score_runs (
-	id         TEXT PRIMARY KEY,
-	horizon    TEXT NOT NULL,
-	status     TEXT DEFAULT 'running',
-	started_at TIMESTAMPTZ DEFAULT NOW(),
+	id          TEXT PRIMARY KEY,
+	horizon     TEXT NOT NULL,
+	status      TEXT DEFAULT 'running',
+	stage       TEXT DEFAULT 'init',
+	processed   INT DEFAULT 0,
+	total       INT DEFAULT 0,
+	started_at  TIMESTAMPTZ DEFAULT NOW(),
 	finished_at TIMESTAMPTZ,
+	last_update TIMESTAMPTZ DEFAULT NOW(),
 	ticker_count INT DEFAULT 0,
-	error_msg  TEXT
+	error_msg   TEXT
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_news_items_url_unique ON news_items(url);
+CREATE INDEX IF NOT EXISTS idx_score_runs_horizon_started ON score_runs(horizon, started_at DESC);
+
+ALTER TABLE score_runs ADD COLUMN IF NOT EXISTS stage TEXT DEFAULT 'init';
+ALTER TABLE score_runs ADD COLUMN IF NOT EXISTS processed INT DEFAULT 0;
+ALTER TABLE score_runs ADD COLUMN IF NOT EXISTS total INT DEFAULT 0;
+ALTER TABLE score_runs ADD COLUMN IF NOT EXISTS last_update TIMESTAMPTZ DEFAULT NOW();
 `

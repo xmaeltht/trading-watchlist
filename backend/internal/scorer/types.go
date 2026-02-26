@@ -59,13 +59,13 @@ type TickerInput struct {
 	RelStrength52w       float64 // percentile vs universe (0–100)
 
 	// Volume
-	AvgVol30d   float64
-	CurrentVol  float64
-	Float       float64 // shares float (millions)
+	AvgVol30d    float64
+	CurrentVol   float64
+	Float        float64 // shares float (millions)
 	SpreadEstPct float64 // estimated bid-ask spread %
 
 	// Fundamentals
-	Fundamentals store.Fundamentals
+	Fundamentals    store.Fundamentals
 	HasFundamentals bool
 
 	// News & catalyst
@@ -79,6 +79,12 @@ type TickerInput struct {
 	IVRank          float64 // 0–100
 	DrawdownFrom52w float64 // % below 52-week high (positive = below)
 	SocialSpikeZ    float64 // z-score of social mentions vs 30d baseline
+
+	// Data freshness / regime context
+	LatestBarAgeDays    int
+	LatestNewsAgeDays   int
+	FundamentalsAgeDays int
+	MarketRegime        string // BULL | NEUTRAL | BEAR
 }
 
 // ScoreResult is the fully scored output for one ticker.

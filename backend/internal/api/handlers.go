@@ -61,11 +61,47 @@ func (s *Server) getTicker(c *fiber.Ctx) error {
 	})
 }
 
-// listRuns returns recent scoring runs.
+// listRuns returns latest run per horizon.
 // GET /api/runs
 func (s *Server) listRuns(c *fiber.Ctx) error {
-	// TODO: implement store.ListRuns
-	return c.JSON(fiber.Map{"runs": []string{}, "note": "not yet implemented"})
+	daily, _ := s.store.LatestRunByHorizon(c.Context(), store.HorizonDaily)
+	weekly, _ := s.store.LatestRunByHorizon(c.Context(), store.HorizonWeekly)
+	monthly, _ := s.store.LatestRunByHorizon(c.Context(), store.HorizonMonthly)
+	return c.JSON(fiber.Map{
+		"runs": fiber.Map{
+			"daily":   daily,
+			"weekly":  weekly,
+			"monthly": monthly,
+		},
+	})
+}
+
+// getRunStatus returns a single run status by run_id.
+// GET /api/runs/status/:id
+func (s *Server) getRunStatus(c *fiber.Ctx) error {
+	id := c.Params("id")
+	if id == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "run id is required")
+	}
+	run, err := s.store.GetRun(c.Context(), id)
+	if err != nil {
+		return fiber.NewError(fiber.StatusNotFound, "run not found")
+	}
+	return c.JSON(run)
+}
+
+// getLatestRun returns latest run by horizon.
+// GET /api/runs/latest/:horizon
+func (s *Server) getLatestRun(c *fiber.Ctx) error {
+	horizon := store.Horizon(c.Params("horizon"))
+	if !validHorizon(horizon) {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid horizon")
+	}
+	run, err := s.store.LatestRunByHorizon(c.Context(), horizon)
+	if err != nil {
+		return fiber.NewError(fiber.StatusNotFound, "no run found")
+	}
+	return c.JSON(run)
 }
 
 // exportCSV exports the latest watchlist as a CSV file.

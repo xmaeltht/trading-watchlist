@@ -30,22 +30,22 @@ func NewFundamentalsIngestor(apiKey string, s *store.Store) *FundamentalsIngesto
 
 // avOverviewResponse is the Alpha Vantage OVERVIEW endpoint shape.
 type avOverviewResponse struct {
-	Symbol                  string `json:"Symbol"`
-	Name                    string `json:"Name"`
-	Sector                  string `json:"Sector"`
-	Industry                string `json:"Industry"`
-	ForwardPE               string `json:"ForwardPE"`
-	PEGRatio                string `json:"PEGRatio"`
-	EVToEBITDA              string `json:"EVToEBITDA"`
-	GrossProfitTTM          string `json:"GrossProfitTTM"`
-	OperatingMarginTTM      string `json:"OperatingMarginTTM"`
-	RevenueGrowthYOY        string `json:"RevenueGrowthYOY"`
-	EPSGrowthYOY            string `json:"EPSGrowthYOY"`
-	DebtToEquityRatio       string `json:"DebtToEquityRatio"`
-	BookValue               string `json:"BookValue"`
-	SharesOutstanding       string `json:"SharesOutstanding"`
-	EPS                     string `json:"EPS"`
-	AnalystTargetPrice      string `json:"AnalystTargetPrice"`
+	Symbol                     string `json:"Symbol"`
+	Name                       string `json:"Name"`
+	Sector                     string `json:"Sector"`
+	Industry                   string `json:"Industry"`
+	ForwardPE                  string `json:"ForwardPE"`
+	PEGRatio                   string `json:"PEGRatio"`
+	EVToEBITDA                 string `json:"EVToEBITDA"`
+	GrossProfitTTM             string `json:"GrossProfitTTM"`
+	OperatingMarginTTM         string `json:"OperatingMarginTTM"`
+	RevenueGrowthYOY           string `json:"RevenueGrowthYOY"`
+	EPSGrowthYOY               string `json:"EPSGrowthYOY"`
+	DebtToEquityRatio          string `json:"DebtToEquityRatio"`
+	BookValue                  string `json:"BookValue"`
+	SharesOutstanding          string `json:"SharesOutstanding"`
+	EPS                        string `json:"EPS"`
+	AnalystTargetPrice         string `json:"AnalystTargetPrice"`
 	QuarterlyEarningsGrowthYOY string `json:"QuarterlyEarningsGrowthYOY"`
 	QuarterlyRevenueGrowthYOY  string `json:"QuarterlyRevenueGrowthYOY"`
 }
@@ -96,7 +96,7 @@ func (f *FundamentalsIngestor) IngestTicker(ctx context.Context, ticker string) 
 		Ticker:           ticker,
 		RevenueGrowthYoY: parseFloat(data.QuarterlyRevenueGrowthYOY) * 100,
 		EPSGrowthYoY:     parseFloat(data.QuarterlyEarningsGrowthYOY) * 100,
-		GrossMargin:      parseFloat(data.GrossProfitTTM), // note: this is profit not margin; real impl would compute
+		GrossMargin:      parseFloat(data.OperatingMarginTTM) * 100,
 		OperatingMargin:  parseFloat(data.OperatingMarginTTM) * 100,
 		PEForward:        parseFloat(data.ForwardPE),
 		PEGRatio:         parseFloat(data.PEGRatio),
@@ -107,6 +107,13 @@ func (f *FundamentalsIngestor) IngestTicker(ctx context.Context, ticker string) 
 	if err := f.store.SaveFundamentals(ctx, fund); err != nil {
 		return fmt.Errorf("failed to save fundamentals for %s: %w", ticker, err)
 	}
+	_ = f.store.SaveCompanyProfile(ctx, store.CompanyProfile{
+		Ticker:      ticker,
+		CompanyName: data.Name,
+		Sector:      data.Sector,
+		Industry:    data.Industry,
+		Source:      "alpha_vantage",
+	})
 
 	slog.Info("ingested fundamentals", "ticker", ticker, "pe_fwd", fund.PEForward)
 	return nil

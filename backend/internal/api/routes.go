@@ -10,8 +10,6 @@ import (
 	"github.com/xmaeltht/trading-watchlist/internal/store"
 )
 
-
-
 type Server struct {
 	app   *fiber.App
 	cfg   *config.Config
@@ -38,10 +36,18 @@ func (s *Server) registerRoutes() {
 	api := s.app.Group("/api")
 
 	api.Get("/health", func(c *fiber.Ctx) error {
+		latestDaily, _ := s.store.LatestRunByHorizon(c.Context(), store.HorizonDaily)
+		latestWeekly, _ := s.store.LatestRunByHorizon(c.Context(), store.HorizonWeekly)
+		latestMonthly, _ := s.store.LatestRunByHorizon(c.Context(), store.HorizonMonthly)
 		return c.JSON(fiber.Map{
 			"status":     "ok",
 			"paper_mode": s.cfg.PaperModeOnly,
 			"sources":    s.cfg.DataSources(),
+			"latest_runs": fiber.Map{
+				"daily":   latestDaily,
+				"weekly":  latestWeekly,
+				"monthly": latestMonthly,
+			},
 		})
 	})
 
@@ -52,11 +58,13 @@ func (s *Server) registerRoutes() {
 
 	// Runs
 	api.Get("/runs", s.listRuns)
+	api.Get("/runs/status/:id", s.getRunStatus)
+	api.Get("/runs/latest/:horizon", s.getLatestRun)
 	api.Post("/runs/trigger/:horizon", s.triggerRun)
 }
 
-func (s *Server) Listen(addr string) error  { return s.app.Listen(addr) }
-func (s *Server) Shutdown() error           { return s.app.Shutdown() }
+func (s *Server) Listen(addr string) error { return s.app.Listen(addr) }
+func (s *Server) Shutdown() error          { return s.app.Shutdown() }
 
 func customErrorHandler(c *fiber.Ctx, err error) error {
 	code := fiber.StatusInternalServerError

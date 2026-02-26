@@ -10,11 +10,12 @@ type RiskResult struct {
 // ComputeRisk evaluates risk signals and returns a penalty and flags.
 //
 // Penalties:
-//   Earnings within horizon window:  -5 to -15
-//   Deep drawdown (>20% from 52w):   -5
-//   Low-float spike (no news):       -10
-//   High IV rank (>85):              -8
-//   Social sentiment spike (>3σ):    -5
+//
+//	Earnings within horizon window:  -5 to -15
+//	Deep drawdown (>20% from 52w):   -5
+//	Low-float spike (no news):       -10
+//	High IV rank (>85):              -8
+//	Social sentiment spike (>3σ):    -5
 //
 // Penalty capped at 30.
 func ComputeRisk(t *TickerInput, horizonDays int) RiskResult {
@@ -54,6 +55,19 @@ func ComputeRisk(t *TickerInput, horizonDays int) RiskResult {
 	if t.SocialSpikeZ > 3 {
 		penalty += 5
 		flags = append(flags, "📢 SOCIAL SPIKE")
+	}
+	// Fallback when sentiment feed is unavailable: abnormal raw news volume
+	if t.SocialSpikeZ == 0 && t.NewsCount7d >= 12 {
+		penalty += 4
+		flags = append(flags, "📰 NEWS SPIKE")
+	}
+
+	// Regime guardrail: penalize risk in bearish market context
+	if t.MarketRegime == "BEAR" {
+		penalty += 5
+		flags = append(flags, "🌧️ BEAR REGIME")
+	} else if t.MarketRegime == "NEUTRAL" {
+		penalty += 2
 	}
 
 	// Low-float momentum trap: price up >30% in 5d with no news

@@ -104,52 +104,101 @@ func (s *Scheduler) runScoring(horizon store.Horizon) {
 	}
 }
 
-func (s *Scheduler) runScoringCtx(ctx context.Context, horizon store.Horizon) error {
+func (s *Scheduler) runScoringCtx(ctx context.Context, horizon store.Horizon) (runErr error) {
 	runID := fmt.Sprintf("%s_%s", horizon, time.Now().Format("20060102_150405"))
 	universe := s.getUniverse()
+	_ = s.store.CreateRun(ctx, runID, string(horizon), len(universe))
+	defer func() {
+		if runErr != nil {
+			_ = s.store.CompleteRun(ctx, runID, 0, runErr.Error())
+		}
+	}()
 
 	slog.Info("scoring run started", "run_id", runID, "horizon", horizon, "universe", len(universe))
+	_ = s.store.UpdateRunProgress(ctx, runID, "ingest_prices", 0)
 
-	// Step 1: Ingest latest prices
-	if err := s.priceIng.IngestUniverse(ctx, universe, 250); err != nil {
+	// Step 1: Ingest latest prices (+ SPY benchmark for regime)
+	priceUniverse := append([]string{}, universe...)
+	priceUniverse = append(priceUniverse, "SPY")
+	if err := s.priceIng.IngestUniverse(ctx, priceUniverse, 250); err != nil {
 		slog.Warn("partial price ingestion failure", "error", err)
 	}
 
 	// Step 2: Build scorer inputs
+	_ = s.store.UpdateRunProgress(ctx, runID, "build_inputs", 0)
 	inputMap := make(map[string]scorer.TickerInput, len(universe))
 	inputs := make([]scorer.TickerInput, 0, len(universe))
+	regime := s.detectMarketRegime(ctx)
 
-	for _, ticker := range universe {
+	for i, ticker := range universe {
 		bars, err := s.store.GetPriceBars(ctx, ticker, 250)
 		if err != nil || len(bars) < 20 {
 			slog.Warn("insufficient data, skipping ticker", "ticker", ticker)
+			_ = s.store.UpdateRunProgress(ctx, runID, "build_inputs", i+1)
 			continue
 		}
 
+		company, sector := companySectorForTicker(ticker)
+		if p, err := s.store.GetCompanyProfile(ctx, ticker); err == nil && p != nil {
+			if p.CompanyName != "" {
+				company = p.CompanyName
+			}
+			if p.Sector != "" {
+				sector = p.Sector
+			}
+		}
 		input := scorer.TickerInput{
-			Ticker:          ticker,
-			PriceBars:       bars,
-			Price:           bars[0].Close,
-			EarningsDaysAway: -1, // unknown until calendar ingestor added
+			Ticker:           ticker,
+			CompanyName:      company,
+			Sector:           sector,
+			PriceBars:        bars,
+			Price:            bars[0].Close,
+			EarningsDaysAway: -1,
+			MarketRegime:     regime,
+			LatestBarAgeDays: int(time.Since(bars[0].Date).Hours() / 24),
 		}
 		computeTechFeatures(&input)
 
-		// Attach fundamentals if available
-		// TODO: load from store.GetFundamentals once implemented
+		if f, err := s.store.GetFundamentals(ctx, ticker); err == nil && f != nil {
+			input.Fundamentals = *f
+			input.HasFundamentals = true
+			input.FundamentalsAgeDays = int(time.Since(f.UpdatedAt).Hours() / 24)
+		}
+		if news, err := s.store.GetRecentNews(ctx, ticker, 25); err == nil {
+			input.NewsCount7d = 0
+			latest := 999
+			for _, n := range news {
+				age := int(time.Since(n.PublishedAt).Hours() / 24)
+				if age < latest {
+					latest = age
+				}
+				if age <= 7 {
+					input.NewsCount7d++
+				}
+			}
+			if latest != 999 {
+				input.LatestNewsAgeDays = latest
+			}
+		}
+
 		inputMap[ticker] = input
 		inputs = append(inputs, input)
+		_ = s.store.UpdateRunProgress(ctx, runID, "build_inputs", i+1)
 	}
 
 	// Step 3: Score and rank
+	_ = s.store.UpdateRunProgress(ctx, runID, "score", len(universe))
 	results := scorer.ScoreAll(inputs, horizon, s.cfg.MaxPerSector)
 	if len(results) > s.cfg.ListSize {
 		results = results[:s.cfg.ListSize]
 	}
 
 	// Step 4: Generate LLM explanations for top results
+	_ = s.store.UpdateRunProgress(ctx, runID, "explain", len(universe))
 	explanations := s.explainer.ExplainBatch(ctx, results, inputMap, horizon)
 
 	// Step 5: Save to store
+	_ = s.store.UpdateRunProgress(ctx, runID, "save", len(universe))
 	scores := make([]store.TickerScore, 0, len(results))
 	for i, r := range results {
 		exp := explanations[r.Ticker]
@@ -181,8 +230,10 @@ func (s *Scheduler) runScoringCtx(ctx context.Context, horizon store.Horizon) er
 	}
 
 	if err := s.store.SaveScores(ctx, scores); err != nil {
-		return fmt.Errorf("failed to save scores: %w", err)
+		runErr = fmt.Errorf("failed to save scores: %w", err)
+		return runErr
 	}
+	_ = s.store.CompleteRun(ctx, runID, len(scores), "")
 
 	slog.Info("scoring run complete", "run_id", runID, "tickers_saved", len(scores))
 	return nil
@@ -288,6 +339,46 @@ func simpleAvg(data []float64, period int) float64 {
 		sum += data[i]
 	}
 	return sum / float64(period)
+}
+
+func (s *Scheduler) detectMarketRegime(ctx context.Context) string {
+	bars, err := s.store.GetPriceBars(ctx, "SPY", 80)
+	if err != nil || len(bars) < 50 {
+		return "NEUTRAL"
+	}
+	closes := make([]float64, len(bars))
+	for i, b := range bars {
+		closes[i] = b.Close
+	}
+	ema20 := simpleAvg(closes, 20)
+	ema50 := simpleAvg(closes, 50)
+	if bars[0].Close < ema20 && ema20 < ema50 {
+		return "BEAR"
+	}
+	if bars[0].Close > ema20 && ema20 > ema50 {
+		return "BULL"
+	}
+	return "NEUTRAL"
+}
+
+var companySectorMap = map[string][2]string{
+	"AAPL": {"Apple Inc.", "Technology"}, "MSFT": {"Microsoft Corporation", "Technology"}, "GOOG": {"Alphabet Inc.", "Communication Services"}, "GOOGL": {"Alphabet Inc.", "Communication Services"}, "AMZN": {"Amazon.com, Inc.", "Consumer Discretionary"},
+	"NVDA": {"NVIDIA Corporation", "Technology"}, "META": {"Meta Platforms, Inc.", "Communication Services"}, "BRK.B": {"Berkshire Hathaway Inc.", "Financials"}, "TSLA": {"Tesla, Inc.", "Consumer Discretionary"}, "UNH": {"UnitedHealth Group Incorporated", "Health Care"},
+	"XOM": {"Exxon Mobil Corporation", "Energy"}, "JNJ": {"Johnson & Johnson", "Health Care"}, "JPM": {"JPMorgan Chase & Co.", "Financials"}, "V": {"Visa Inc.", "Financials"}, "PG": {"The Procter & Gamble Company", "Consumer Staples"},
+	"MA": {"Mastercard Incorporated", "Financials"}, "HD": {"The Home Depot, Inc.", "Consumer Discretionary"}, "AVGO": {"Broadcom Inc.", "Technology"}, "CVX": {"Chevron Corporation", "Energy"}, "MRK": {"Merck & Co., Inc.", "Health Care"},
+	"ABBV": {"AbbVie Inc.", "Health Care"}, "LLY": {"Eli Lilly and Company", "Health Care"}, "PEP": {"PepsiCo, Inc.", "Consumer Staples"}, "KO": {"The Coca-Cola Company", "Consumer Staples"}, "COST": {"Costco Wholesale Corporation", "Consumer Staples"},
+	"ADBE": {"Adobe Inc.", "Technology"}, "WMT": {"Walmart Inc.", "Consumer Staples"}, "BAC": {"Bank of America Corporation", "Financials"}, "CRM": {"Salesforce, Inc.", "Technology"}, "TMO": {"Thermo Fisher Scientific Inc.", "Health Care"},
+	"MCD": {"McDonald's Corporation", "Consumer Discretionary"}, "CSCO": {"Cisco Systems, Inc.", "Technology"}, "ACN": {"Accenture plc", "Information Technology"}, "ABT": {"Abbott Laboratories", "Health Care"}, "NFLX": {"Netflix, Inc.", "Communication Services"},
+	"LIN": {"Linde plc", "Materials"}, "DHR": {"Danaher Corporation", "Health Care"}, "TXN": {"Texas Instruments Incorporated", "Technology"}, "PM": {"Philip Morris International Inc.", "Consumer Staples"}, "NEE": {"NextEra Energy, Inc.", "Utilities"},
+	"CMCSA": {"Comcast Corporation", "Communication Services"}, "ORCL": {"Oracle Corporation", "Technology"}, "AMD": {"Advanced Micro Devices, Inc.", "Technology"}, "UNP": {"Union Pacific Corporation", "Industrials"}, "INTC": {"Intel Corporation", "Technology"},
+	"IBM": {"International Business Machines Corporation", "Technology"}, "QCOM": {"QUALCOMM Incorporated", "Technology"}, "LOW": {"Lowe's Companies, Inc.", "Consumer Discretionary"}, "SBUX": {"Starbucks Corporation", "Consumer Discretionary"}, "GS": {"The Goldman Sachs Group, Inc.", "Financials"},
+}
+
+func companySectorForTicker(ticker string) (company string, sector string) {
+	if v, ok := companySectorMap[ticker]; ok {
+		return v[0], v[1]
+	}
+	return ticker, "Unknown"
 }
 
 func mustLoadLocation(name string) *time.Location {

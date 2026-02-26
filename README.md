@@ -61,12 +61,29 @@ Each ticker receives a Composite Score (0–100) from weighted sub-scores:
 
 ## Risk Controls
 
-- Max 5 tickers per GICS sector
-- Earnings flags when within horizon window
+- Max 5 tickers per sector (`MAX_PER_SECTOR`)
+- Earnings proximity flags within horizon window
 - IV rank warnings (>70)
-- Social media hype detection (>3σ spike)
+- Social/social-news spike guard (`SocialSpikeZ` or abnormal news volume)
 - Momentum trap filtering (>30% move, no news)
-- VIX-based regime gating (Risk-On / Neutral / Caution / Risk-Off)
+- SPY trend-based regime gating (`BULL`/`NEUTRAL`/`BEAR`) with penalty adjustment
+- Data-staleness penalties (price/news/fundamentals) surfaced in `data_gaps`
+
+## API Endpoints
+
+- `GET /api/health` — service health + latest run metadata by horizon
+- `GET /api/watchlist/:horizon` — latest ranked watchlist for `daily|weekly|monthly`
+- `GET /api/ticker/:horizon/:symbol` — latest detailed ticker record
+- `GET /api/export/:horizon` — CSV export
+- `GET /api/runs` — latest run per horizon
+- `GET /api/runs/status/:id` — progress and status for a run id
+- `GET /api/runs/latest/:horizon` — latest run for one horizon
+- `POST /api/runs/trigger/:horizon` — trigger scoring run
+
+## Notes
+
+- Company/sector enrichment is sourced from Alpha Vantage company overview when available, with built-in fallback mapping for the default universe.
+- Fundamentals are optional but supported; missing API keys degrade gracefully and are surfaced via confidence/data-gap flags.
 
 ## License
 
