@@ -18,40 +18,40 @@ const (
 
 // TickerScore holds the full scored record for a ticker on a given horizon and run.
 type TickerScore struct {
-	ID             int64   `db:"id"`
-	RunID          string  `db:"run_id"`
-	Horizon        Horizon `db:"horizon"`
-	Ticker         string  `db:"ticker"`
-	CompanyName    string  `db:"company_name"`
-	Sector         string  `db:"sector"`
-	Rank           int     `db:"rank"`
-	CompositeScore float64 `db:"composite_score"`
+	ID             int64   `db:"id" json:"id"`
+	RunID          string  `db:"run_id" json:"run_id"`
+	Horizon        Horizon `db:"horizon" json:"horizon"`
+	Ticker         string  `db:"ticker" json:"ticker"`
+	CompanyName    string  `db:"company_name" json:"company_name"`
+	Sector         string  `db:"sector" json:"sector"`
+	Rank           int     `db:"rank" json:"rank"`
+	CompositeScore float64 `db:"composite_score" json:"composite_score"`
 
 	// Sub-scores (0–100)
-	MomentumScore    float64 `db:"momentum_score"`
-	VolatilityScore  float64 `db:"volatility_score"`
-	LiquidityScore   float64 `db:"liquidity_score"`
-	CatalystScore    float64 `db:"catalyst_score"`
-	FundamentalScore float64 `db:"fundamental_score"`
-	RiskPenalty      float64 `db:"risk_penalty"`
+	MomentumScore    float64 `db:"momentum_score" json:"momentum_score"`
+	VolatilityScore  float64 `db:"volatility_score" json:"volatility_score"`
+	LiquidityScore   float64 `db:"liquidity_score" json:"liquidity_score"`
+	CatalystScore    float64 `db:"catalyst_score" json:"catalyst_score"`
+	FundamentalScore float64 `db:"fundamental_score" json:"fundamental_score"`
+	RiskPenalty      float64 `db:"risk_penalty" json:"risk_penalty"`
 
 	// Confidence
-	ConfidenceScore float64 `db:"confidence_score"`
-	DataGaps        string  `db:"data_gaps"` // JSON array of missing fields
+	ConfidenceScore float64 `db:"confidence_score" json:"confidence_score"`
+	DataGaps        string  `db:"data_gaps" json:"data_gaps"` // JSON array of missing fields
 
 	// Generated content
-	Thesis           string `db:"thesis"`          // LLM-generated markdown bullets
-	TradePlanText    string `db:"trade_plan_text"` // LLM-generated template
-	InvalidationText string `db:"invalidation_text"`
-	RiskRating       string `db:"risk_rating"` // LOW | MEDIUM | HIGH
-	Flags            string `db:"flags"`       // JSON array of flag strings
+	Thesis           string `db:"thesis" json:"thesis"`                   // LLM-generated markdown bullets
+	TradePlanText    string `db:"trade_plan_text" json:"trade_plan_text"` // LLM-generated template
+	InvalidationText string `db:"invalidation_text" json:"invalidation_text"`
+	RiskRating       string `db:"risk_rating" json:"risk_rating"` // LOW | MEDIUM | HIGH
+	Flags            string `db:"flags" json:"flags"`             // JSON array of flag strings
 
 	// Raw signals (stored as JSON for flexibility)
-	TechnicalSnapshot   string `db:"technical_snapshot"`   // JSON
-	FundamentalSnapshot string `db:"fundamental_snapshot"` // JSON
-	NewsSummary         string `db:"news_summary"`         // JSON
+	TechnicalSnapshot   string `db:"technical_snapshot" json:"technical_snapshot"`     // JSON
+	FundamentalSnapshot string `db:"fundamental_snapshot" json:"fundamental_snapshot"` // JSON
+	NewsSummary         string `db:"news_summary" json:"news_summary"`                 // JSON
 
-	CreatedAt time.Time `db:"created_at"`
+	CreatedAt time.Time `db:"created_at" json:"created_at"`
 }
 
 // PriceBar is a daily OHLCV record.
