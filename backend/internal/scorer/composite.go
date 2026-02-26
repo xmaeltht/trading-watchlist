@@ -51,21 +51,48 @@ func ScoreAll(inputs []TickerInput, horizon store.Horizon, maxPerSector int) []S
 		// Confidence: based on data completeness
 		confidence, gaps := computeConfidence(t)
 
+		compositeClamped := clamp(composite)
+		upsidePct := (compositeClamped - 50) / 2
+		if upsidePct < 2 {
+			upsidePct = 2
+		}
+		if upsidePct > 18 {
+			upsidePct = 18
+		}
+		stopPct := 0.05
+		switch risk.Rating {
+		case "LOW":
+			stopPct = 0.03
+		case "HIGH":
+			stopPct = 0.08
+		}
+		target := t.Price * (1 + upsidePct/100)
+		stop := t.Price * (1 - stopPct)
+		rr := 0.0
+		if t.Price-stop > 0 {
+			rr = (target - t.Price) / (t.Price - stop)
+		}
+
 		result := ScoreResult{
-			Ticker:           t.Ticker,
-			CompanyName:      t.CompanyName,
-			Sector:           t.Sector,
-			CompositeScore:   clamp(composite),
-			MomentumScore:    momentum,
-			VolatilityScore:  volatility,
-			LiquidityScore:   liquidity,
-			CatalystScore:    catalyst,
-			FundamentalScore: fundamental,
-			RiskPenalty:      risk.Penalty,
-			ConfidenceScore:  confidence,
-			DataGaps:         gaps,
-			RiskRating:       risk.Rating,
-			Flags:            risk.Flags,
+			Ticker:             t.Ticker,
+			CompanyName:        t.CompanyName,
+			Sector:             t.Sector,
+			CompositeScore:     compositeClamped,
+			MomentumScore:      momentum,
+			VolatilityScore:    volatility,
+			LiquidityScore:     liquidity,
+			CatalystScore:      catalyst,
+			FundamentalScore:   fundamental,
+			RiskPenalty:        risk.Penalty,
+			ConfidenceScore:    confidence,
+			DataGaps:           gaps,
+			RiskRating:         risk.Rating,
+			Flags:              risk.Flags,
+			CurrentPrice:       t.Price,
+			ProjectedTarget:    target,
+			ProjectedStop:      stop,
+			ProjectedRR:        rr,
+			ProjectedUpsidePct: upsidePct,
 		}
 		raw = append(raw, result)
 	}

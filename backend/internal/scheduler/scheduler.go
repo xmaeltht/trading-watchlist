@@ -226,6 +226,11 @@ func (s *Scheduler) runScoringCtx(ctx context.Context, horizon store.Horizon) (r
 			InvalidationText: exp.InvalidationText,
 			RiskRating:       r.RiskRating,
 			Flags:            flagsJSON,
+			CurrentPrice:     r.CurrentPrice,
+			TargetPrice:      r.ProjectedTarget,
+			StopPrice:        r.ProjectedStop,
+			RRRatio:          r.ProjectedRR,
+			UpsidePct:        r.ProjectedUpsidePct,
 		})
 	}
 

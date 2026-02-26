@@ -46,6 +46,12 @@ type TickerScore struct {
 	RiskRating       string `db:"risk_rating" json:"risk_rating"` // LOW | MEDIUM | HIGH
 	Flags            string `db:"flags" json:"flags"`             // JSON array of flag strings
 
+	CurrentPrice float64 `db:"current_price" json:"current_price"`
+	TargetPrice  float64 `db:"target_price" json:"target_price"`
+	StopPrice    float64 `db:"stop_price" json:"stop_price"`
+	RRRatio      float64 `db:"rr_ratio" json:"rr_ratio"`
+	UpsidePct    float64 `db:"upside_pct" json:"upside_pct"`
+
 	// Raw signals (stored as JSON for flexibility)
 	TechnicalSnapshot   string `db:"technical_snapshot" json:"technical_snapshot"`     // JSON
 	FundamentalSnapshot string `db:"fundamental_snapshot" json:"fundamental_snapshot"` // JSON
@@ -129,6 +135,7 @@ func (s *Store) SaveScores(ctx context.Context, scores []TickerScore) error {
 				catalyst_score, fundamental_score, risk_penalty,
 				confidence_score, data_gaps, thesis, trade_plan_text,
 				invalidation_text, risk_rating, flags,
+				current_price, target_price, stop_price, rr_ratio, upside_pct,
 				technical_snapshot, fundamental_snapshot, news_summary
 			) VALUES (
 				$1,$2,$3,$4,$5,$6,
@@ -136,19 +143,26 @@ func (s *Store) SaveScores(ctx context.Context, scores []TickerScore) error {
 				$11,$12,$13,
 				$14,$15,$16,$17,
 				$18,$19,$20,
-				$21,$22,$23
+				$21,$22,$23,$24,$25,
+				$26,$27,$28
 			)
 			ON CONFLICT (run_id, horizon, ticker) DO UPDATE SET
 				rank = EXCLUDED.rank,
 				composite_score = EXCLUDED.composite_score,
 				thesis = EXCLUDED.thesis,
 				trade_plan_text = EXCLUDED.trade_plan_text,
-				flags = EXCLUDED.flags`,
+				flags = EXCLUDED.flags,
+				current_price = EXCLUDED.current_price,
+				target_price = EXCLUDED.target_price,
+				stop_price = EXCLUDED.stop_price,
+				rr_ratio = EXCLUDED.rr_ratio,
+				upside_pct = EXCLUDED.upside_pct`,
 			sc.RunID, sc.Horizon, sc.Ticker, sc.CompanyName, sc.Sector, sc.Rank,
 			sc.CompositeScore, sc.MomentumScore, sc.VolatilityScore, sc.LiquidityScore,
 			sc.CatalystScore, sc.FundamentalScore, sc.RiskPenalty,
 			sc.ConfidenceScore, sc.DataGaps, sc.Thesis, sc.TradePlanText,
 			sc.InvalidationText, sc.RiskRating, sc.Flags,
+			sc.CurrentPrice, sc.TargetPrice, sc.StopPrice, sc.RRRatio, sc.UpsidePct,
 			sc.TechnicalSnapshot, sc.FundamentalSnapshot, sc.NewsSummary,
 		)
 		if err != nil {
@@ -186,6 +200,7 @@ func (s *Store) GetWatchlist(ctx context.Context, horizon Horizon, limit int) ([
 			&sc.CatalystScore, &sc.FundamentalScore, &sc.RiskPenalty,
 			&sc.ConfidenceScore, &sc.DataGaps, &sc.Thesis, &sc.TradePlanText,
 			&sc.InvalidationText, &sc.RiskRating, &sc.Flags,
+			&sc.CurrentPrice, &sc.TargetPrice, &sc.StopPrice, &sc.RRRatio, &sc.UpsidePct,
 			&sc.TechnicalSnapshot, &sc.FundamentalSnapshot, &sc.NewsSummary,
 			&sc.CreatedAt,
 		); err != nil {
@@ -214,6 +229,7 @@ func (s *Store) GetTicker(ctx context.Context, horizon Horizon, ticker string) (
 		&sc.CatalystScore, &sc.FundamentalScore, &sc.RiskPenalty,
 		&sc.ConfidenceScore, &sc.DataGaps, &sc.Thesis, &sc.TradePlanText,
 		&sc.InvalidationText, &sc.RiskRating, &sc.Flags,
+		&sc.CurrentPrice, &sc.TargetPrice, &sc.StopPrice, &sc.RRRatio, &sc.UpsidePct,
 		&sc.TechnicalSnapshot, &sc.FundamentalSnapshot, &sc.NewsSummary,
 		&sc.CreatedAt,
 	)
@@ -527,6 +543,11 @@ CREATE TABLE IF NOT EXISTS ticker_scores (
 	invalidation_text     TEXT DEFAULT '',
 	risk_rating           TEXT DEFAULT 'MEDIUM',
 	flags                 TEXT DEFAULT '[]',
+	current_price         DOUBLE PRECISION DEFAULT 0,
+	target_price          DOUBLE PRECISION DEFAULT 0,
+	stop_price            DOUBLE PRECISION DEFAULT 0,
+	rr_ratio              DOUBLE PRECISION DEFAULT 0,
+	upside_pct            DOUBLE PRECISION DEFAULT 0,
 	technical_snapshot    TEXT DEFAULT '{}',
 	fundamental_snapshot  TEXT DEFAULT '{}',
 	news_summary          TEXT DEFAULT '{}',
@@ -564,4 +585,10 @@ ALTER TABLE score_runs ADD COLUMN IF NOT EXISTS stage TEXT DEFAULT 'init';
 ALTER TABLE score_runs ADD COLUMN IF NOT EXISTS processed INT DEFAULT 0;
 ALTER TABLE score_runs ADD COLUMN IF NOT EXISTS total INT DEFAULT 0;
 ALTER TABLE score_runs ADD COLUMN IF NOT EXISTS last_update TIMESTAMPTZ DEFAULT NOW();
+
+ALTER TABLE ticker_scores ADD COLUMN IF NOT EXISTS current_price DOUBLE PRECISION DEFAULT 0;
+ALTER TABLE ticker_scores ADD COLUMN IF NOT EXISTS target_price DOUBLE PRECISION DEFAULT 0;
+ALTER TABLE ticker_scores ADD COLUMN IF NOT EXISTS stop_price DOUBLE PRECISION DEFAULT 0;
+ALTER TABLE ticker_scores ADD COLUMN IF NOT EXISTS rr_ratio DOUBLE PRECISION DEFAULT 0;
+ALTER TABLE ticker_scores ADD COLUMN IF NOT EXISTS upside_pct DOUBLE PRECISION DEFAULT 0;
 `

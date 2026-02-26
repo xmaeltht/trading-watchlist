@@ -23,6 +23,9 @@ export default function WatchlistTable({ data, horizon }: Props) {
               <th className="text-left px-4 py-3 text-gray-400 font-medium w-8">#</th>
               <th className="text-left px-4 py-3 text-gray-400 font-medium">Ticker</th>
               <th className="text-left px-4 py-3 text-gray-400 font-medium hidden md:table-cell">Sector</th>
+              <th className="text-right px-4 py-3 text-gray-400 font-medium">Price</th>
+              <th className="text-right px-4 py-3 text-gray-400 font-medium hidden md:table-cell">Target</th>
+              <th className="text-right px-4 py-3 text-gray-400 font-medium hidden md:table-cell">R/R</th>
               <th className="text-right px-4 py-3 text-gray-400 font-medium">Score</th>
               <th className="text-right px-4 py-3 text-gray-400 font-medium hidden lg:table-cell">Momentum</th>
               <th className="text-right px-4 py-3 text-gray-400 font-medium hidden lg:table-cell">Catalyst</th>
@@ -48,6 +51,9 @@ export default function WatchlistTable({ data, horizon }: Props) {
                     </Link>
                   </td>
                   <td className="px-4 py-3 text-gray-400 text-xs hidden md:table-cell">{t.sector ?? "—"}</td>
+                  <td className="px-4 py-3 text-right text-sm text-gray-200">${t.current_price?.toFixed(2)}</td>
+                  <td className="px-4 py-3 text-right text-sm text-green-300 hidden md:table-cell">${t.target_price?.toFixed(2)}</td>
+                  <td className={`px-4 py-3 text-right text-xs hidden md:table-cell ${t.rr_ratio >= 2 ? "text-green-400" : "text-yellow-400"}`}>{t.rr_ratio?.toFixed(2)}x</td>
                   <td className="px-4 py-3 text-right">
                     <span className={`font-bold text-base ${scoreColor(t.composite_score)}`}>
                       {t.composite_score.toFixed(0)}

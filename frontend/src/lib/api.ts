@@ -24,6 +24,11 @@ export interface TickerScore {
   invalidation_text: string;
   risk_rating: "LOW" | "MEDIUM" | "HIGH";
   flags: string; // JSON array
+  current_price: number;
+  target_price: number;
+  stop_price: number;
+  rr_ratio: number;
+  upside_pct: number;
   technical_snapshot: string;
   fundamental_snapshot: string;
   news_summary: string;

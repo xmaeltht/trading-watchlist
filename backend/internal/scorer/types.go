@@ -103,6 +103,12 @@ type ScoreResult struct {
 	DataGaps         []string
 	RiskRating       string // LOW | MEDIUM | HIGH
 	Flags            []string
+
+	CurrentPrice       float64
+	ProjectedTarget    float64
+	ProjectedStop      float64
+	ProjectedRR        float64
+	ProjectedUpsidePct float64
 }
 
 // clamp ensures a value stays within [0, 100].

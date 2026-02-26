@@ -78,6 +78,13 @@ export default async function TickerDetail({ params }: Props) {
           </div>
           <div className="text-xs text-gray-500">Confidence: {ticker.confidence_score.toFixed(0)}%</div>
 
+          <div className="text-xs rounded border border-gray-800 bg-gray-950/50 p-2 space-y-1">
+            <div className="flex justify-between"><span className="text-gray-400">Current</span><span>${ticker.current_price?.toFixed(2)}</span></div>
+            <div className="flex justify-between text-green-300"><span>Target</span><span>${ticker.target_price?.toFixed(2)} ({ticker.upside_pct?.toFixed(1)}%)</span></div>
+            <div className="flex justify-between text-red-300"><span>Stop</span><span>${ticker.stop_price?.toFixed(2)}</span></div>
+            <div className="flex justify-between"><span className="text-gray-400">R/R</span><span>{ticker.rr_ratio?.toFixed(2)}x</span></div>
+          </div>
+
           <div className="space-y-3 pt-2">
             <ScoreBar label="Momentum"    score={ticker.momentum_score}    weight={weights.Momentum} />
             <ScoreBar label="Volatility"  score={ticker.volatility_score}  weight={weights.Volatility} />
