@@ -1,0 +1,13 @@
+apiVersion: v2
+name: trading-watchlist
+description: Trading Watchlist Assistant — decision-support tool for ranked trade candidates
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+dependencies:
+  - name: postgresql
+    version: "16.x.x"
+    repository: https://charts.bitnami.com/bitnami
+  - name: redis
+    version: "20.x.x"
+    repository: https://charts.bitnami.com/bitnami

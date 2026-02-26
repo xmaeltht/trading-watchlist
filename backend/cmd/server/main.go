@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/xmaeltht/trading-watchlist/internal/api"
 	"github.com/xmaeltht/trading-watchlist/internal/config"
+	"github.com/xmaeltht/trading-watchlist/internal/explainer"
 	"github.com/xmaeltht/trading-watchlist/internal/ingestor"
 	"github.com/xmaeltht/trading-watchlist/internal/scheduler"
 	"github.com/xmaeltht/trading-watchlist/internal/store"
@@ -22,11 +23,10 @@ func main() {
 
 	cfg := config.Load()
 
-	// Graceful shutdown context
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Connect to PostgreSQL
+	// Database
 	db, err := pgxpool.New(ctx, cfg.DatabaseURL)
 	if err != nil {
 		slog.Error("failed to connect to database", "error", err)
@@ -34,42 +34,42 @@ func main() {
 	}
 	defer db.Close()
 
-	// Initialize store and run migrations
 	s := store.New(db)
 	if err := s.Migrate(ctx); err != nil {
 		slog.Error("failed to run migrations", "error", err)
 		os.Exit(1)
 	}
-	slog.Info("database migrated")
+	slog.Info("database ready")
 
-	// Initialize data ingestors
+	// Ingestors
 	priceIng := ingestor.NewPriceIngestor(cfg.PolygonAPIKey, s)
 	newsIng := ingestor.NewNewsIngestor(cfg.FinnhubAPIKey, s)
+	fundIng := ingestor.NewFundamentalsIngestor(cfg.AlphaVantageAPIKey, s)
 
-	// Start scheduler
-	sched := scheduler.New(cfg, s, priceIng, newsIng)
+	// LLM explainer
+	exp := explainer.New(cfg.LLMProvider, cfg.LLMModel, cfg.OllamaBaseURL, cfg.AnthropicAPIKey)
+
+	// Scheduler
+	sched := scheduler.New(cfg, s, priceIng, newsIng, fundIng, exp)
 	sched.Start()
 	defer sched.Stop()
 
-	// Start API server
-	srv := api.NewServer(cfg, s)
+	// API server
+	srv := api.NewServer(cfg, s, sched)
 	go func() {
 		if err := srv.Listen(":" + cfg.Port); err != nil {
-			slog.Error("server error", "error", err)
+			slog.Error("server stopped", "error", err)
 		}
 	}()
 
 	slog.Info("trading watchlist assistant started",
 		"port", cfg.Port,
 		"paper_mode", cfg.PaperModeOnly,
+		"llm_provider", cfg.LLMProvider,
 		"data_sources", cfg.DataSources(),
 	)
 
-	// Wait for shutdown signal
 	<-ctx.Done()
 	slog.Info("shutting down...")
-	if err := srv.Shutdown(); err != nil {
-		slog.Error("server shutdown error", "error", err)
-	}
-	slog.Info("goodbye")
+	srv.Shutdown()
 }

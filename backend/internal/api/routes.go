@@ -6,16 +6,20 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/xmaeltht/trading-watchlist/internal/config"
+	"github.com/xmaeltht/trading-watchlist/internal/scheduler"
 	"github.com/xmaeltht/trading-watchlist/internal/store"
 )
+
+
 
 type Server struct {
 	app   *fiber.App
 	cfg   *config.Config
 	store *store.Store
+	sched *scheduler.Scheduler
 }
 
-func NewServer(cfg *config.Config, s *store.Store) *Server {
+func NewServer(cfg *config.Config, s *store.Store, sched *scheduler.Scheduler) *Server {
 	app := fiber.New(fiber.Config{
 		AppName:      "Trading Watchlist API",
 		ErrorHandler: customErrorHandler,
@@ -23,12 +27,9 @@ func NewServer(cfg *config.Config, s *store.Store) *Server {
 
 	app.Use(recover.New())
 	app.Use(logger.New())
-	app.Use(cors.New(cors.Config{
-		AllowOrigins: "*",
-		AllowMethods: "GET,POST,OPTIONS",
-	}))
+	app.Use(cors.New(cors.Config{AllowOrigins: "*", AllowMethods: "GET,POST,OPTIONS"}))
 
-	srv := &Server{app: app, cfg: cfg, store: s}
+	srv := &Server{app: app, cfg: cfg, store: s, sched: sched}
 	srv.registerRoutes()
 	return srv
 }
@@ -36,7 +37,6 @@ func NewServer(cfg *config.Config, s *store.Store) *Server {
 func (s *Server) registerRoutes() {
 	api := s.app.Group("/api")
 
-	// Health check
 	api.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
 			"status":     "ok",
@@ -46,21 +46,17 @@ func (s *Server) registerRoutes() {
 	})
 
 	// Watchlists
-	api.Get("/watchlist/:horizon", s.getWatchlist)     // Top 25 for a horizon
-	api.Get("/ticker/:horizon/:symbol", s.getTicker)   // Detail for one ticker
+	api.Get("/watchlist/:horizon", s.getWatchlist)
+	api.Get("/ticker/:horizon/:symbol", s.getTicker)
+	api.Get("/export/:horizon", s.exportCSV)
 
-	// Meta
-	api.Get("/runs", s.listRuns)       // Recent scoring runs
-	api.Get("/export/:horizon", s.exportCSV) // CSV export
+	// Runs
+	api.Get("/runs", s.listRuns)
+	api.Post("/runs/trigger/:horizon", s.triggerRun)
 }
 
-func (s *Server) Listen(addr string) error {
-	return s.app.Listen(addr)
-}
-
-func (s *Server) Shutdown() error {
-	return s.app.Shutdown()
-}
+func (s *Server) Listen(addr string) error  { return s.app.Listen(addr) }
+func (s *Server) Shutdown() error           { return s.app.Shutdown() }
 
 func customErrorHandler(c *fiber.Ctx, err error) error {
 	code := fiber.StatusInternalServerError
@@ -68,8 +64,7 @@ func customErrorHandler(c *fiber.Ctx, err error) error {
 		code = e.Code
 	}
 	return c.Status(code).JSON(fiber.Map{
-		"error": err.Error(),
-		"disclaimer": "This application provides decision-support only, not financial advice. " +
-			"All trading carries risk, including possible loss of principal.",
+		"error":      err.Error(),
+		"disclaimer": "This application provides decision-support only, not financial advice. All trading carries risk.",
 	})
 }

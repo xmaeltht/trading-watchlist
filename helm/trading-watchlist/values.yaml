@@ -1,0 +1,83 @@
+# ── Backend ───────────────────────────────────────────────
+backend:
+  image:
+    repository: ghcr.io/xmaeltht/trading-watchlist-backend
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  env:
+    PORT: "8080"
+    LLM_PROVIDER: "ollama"
+    LLM_MODEL: "llama3.2"
+    OLLAMA_BASE_URL: "http://192.168.5.2:11434"
+    EMBEDDING_MODEL: "nomic-embed-text"
+    MAX_PER_SECTOR: "5"
+    LIST_SIZE: "25"
+    PAPER_MODE_ONLY: "true"
+    AGENT_WORKSPACE: "/tmp/watchlist-workspace"
+
+# ── Frontend ──────────────────────────────────────────────
+frontend:
+  image:
+    repository: ghcr.io/xmaeltht/trading-watchlist-frontend
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+  env:
+    NEXT_PUBLIC_API_URL: "https://watchlist.maelkloud.com/api"
+
+# ── Secrets (pass at deploy time via --set or CI) ─────────
+secrets:
+  jwtSecret: "change-me"
+  polygonApiKey: ""
+  alphaVantageApiKey: ""
+  finnhubApiKey: ""
+  anthropicApiKey: ""
+
+# ── PostgreSQL (Bitnami sub-chart) ────────────────────────
+postgresql:
+  auth:
+    username: watchlist
+    password: watchlist
+    database: watchlist
+  primary:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+
+# ── Redis (Bitnami sub-chart) ─────────────────────────────
+redis:
+  architecture: standalone
+  auth:
+    enabled: false
+  master:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+
+# ── Ingress ───────────────────────────────────────────────
+ingress:
+  enabled: false
+  host: watchlist.maelkloud.com
+
+# ── Cloudflared tunnel (optional) ─────────────────────────
+cloudflared:
+  enabled: false
+  tunnelID: ""
+  hostname: watchlist.maelkloud.com

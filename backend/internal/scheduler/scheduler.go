@@ -2,21 +2,22 @@ package scheduler
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/robfig/cron/v3"
 	"github.com/xmaeltht/trading-watchlist/internal/config"
+	"github.com/xmaeltht/trading-watchlist/internal/explainer"
 	"github.com/xmaeltht/trading-watchlist/internal/ingestor"
 	"github.com/xmaeltht/trading-watchlist/internal/scorer"
 	"github.com/xmaeltht/trading-watchlist/internal/store"
 )
 
-// Universe is the default set of tickers to screen.
-// In production, this would be dynamically loaded from SP500 + NDX + RUT1000 constituents.
+// DefaultUniverse is the screening universe for MVP.
+// Phase 2: dynamically load S&P500 + NDX + RUT1000 constituents from an API.
 var DefaultUniverse = []string{
-	// Top 50 by market cap (placeholder — will be dynamically loaded in v2)
 	"AAPL", "MSFT", "GOOG", "GOOGL", "AMZN", "NVDA", "META", "BRK.B", "TSLA", "UNH",
 	"XOM", "JNJ", "JPM", "V", "PG", "MA", "HD", "AVGO", "CVX", "MRK",
 	"ABBV", "LLY", "PEP", "KO", "COST", "ADBE", "WMT", "BAC", "CRM", "TMO",
@@ -30,20 +31,31 @@ type Scheduler struct {
 	store     *store.Store
 	priceIng  *ingestor.PriceIngestor
 	newsIng   *ingestor.NewsIngestor
+	fundIng   *ingestor.FundamentalsIngestor
+	explainer *explainer.Explainer
 }
 
-func New(cfg *config.Config, s *store.Store, priceIng *ingestor.PriceIngestor, newsIng *ingestor.NewsIngestor) *Scheduler {
+func New(
+	cfg *config.Config,
+	s *store.Store,
+	priceIng *ingestor.PriceIngestor,
+	newsIng *ingestor.NewsIngestor,
+	fundIng *ingestor.FundamentalsIngestor,
+	exp *explainer.Explainer,
+) *Scheduler {
 	return &Scheduler{
-		cron:     cron.New(cron.WithLocation(mustLoadLocation("America/New_York"))),
-		cfg:      cfg,
-		store:    s,
-		priceIng: priceIng,
-		newsIng:  newsIng,
+		cron:      cron.New(cron.WithLocation(mustLoadLocation("America/New_York"))),
+		cfg:       cfg,
+		store:     s,
+		priceIng:  priceIng,
+		newsIng:   newsIng,
+		fundIng:   fundIng,
+		explainer: exp,
 	}
 }
 
 func (s *Scheduler) Start() {
-	// Daily: 6:00 AM ET (pre-market)
+	// Daily pre-market: Mon–Fri 6:00 AM ET
 	s.cron.AddFunc("0 6 * * 1-5", func() {
 		slog.Info("starting daily scoring run")
 		s.runScoring(store.HorizonDaily)
@@ -55,16 +67,20 @@ func (s *Scheduler) Start() {
 		s.runScoring(store.HorizonWeekly)
 	})
 
-	// Monthly: Last day of month at 6:00 PM ET (simplified: 28th)
+	// Monthly: 28th of month at 6:00 PM ET
 	s.cron.AddFunc("0 18 28 * *", func() {
 		slog.Info("starting monthly scoring run")
 		s.runScoring(store.HorizonMonthly)
 	})
 
-	// Data ingestion: every 4 hours on weekdays (news)
+	// News ingestion: every 4h on weekdays
 	s.cron.AddFunc("0 */4 * * 1-5", func() {
-		slog.Info("starting news ingestion")
 		s.ingestNews()
+	})
+
+	// Fundamentals ingestion: daily at 5:00 AM ET (before scoring)
+	s.cron.AddFunc("0 5 * * 1-5", func() {
+		s.ingestFundamentals()
 	})
 
 	s.cron.Start()
@@ -75,7 +91,7 @@ func (s *Scheduler) Stop() {
 	s.cron.Stop()
 }
 
-// RunNow triggers an immediate scoring run for all horizons (for testing/manual trigger).
+// RunNow triggers an immediate scoring run for a given horizon (manual/testing).
 func (s *Scheduler) RunNow(ctx context.Context, horizon store.Horizon) error {
 	return s.runScoringCtx(ctx, horizon)
 }
@@ -92,44 +108,54 @@ func (s *Scheduler) runScoringCtx(ctx context.Context, horizon store.Horizon) er
 	runID := fmt.Sprintf("%s_%s", horizon, time.Now().Format("20060102_150405"))
 	universe := s.getUniverse()
 
-	slog.Info("scoring run started", "run_id", runID, "horizon", horizon, "universe_size", len(universe))
+	slog.Info("scoring run started", "run_id", runID, "horizon", horizon, "universe", len(universe))
 
 	// Step 1: Ingest latest prices
-	daysNeeded := 250 // enough for 200-day EMA
-	if err := s.priceIng.IngestUniverse(ctx, universe, daysNeeded); err != nil {
+	if err := s.priceIng.IngestUniverse(ctx, universe, 250); err != nil {
 		slog.Warn("partial price ingestion failure", "error", err)
 	}
 
-	// Step 2: Build scorer inputs from stored data
+	// Step 2: Build scorer inputs
+	inputMap := make(map[string]scorer.TickerInput, len(universe))
 	inputs := make([]scorer.TickerInput, 0, len(universe))
+
 	for _, ticker := range universe {
-		bars, err := s.store.GetPriceBars(ctx, ticker, daysNeeded)
+		bars, err := s.store.GetPriceBars(ctx, ticker, 250)
 		if err != nil || len(bars) < 20 {
-			slog.Warn("insufficient data for ticker, skipping", "ticker", ticker)
+			slog.Warn("insufficient data, skipping ticker", "ticker", ticker)
 			continue
 		}
 
 		input := scorer.TickerInput{
-			Ticker:    ticker,
-			PriceBars: bars,
-			Price:     bars[0].Close,
+			Ticker:          ticker,
+			PriceBars:       bars,
+			Price:           bars[0].Close,
+			EarningsDaysAway: -1, // unknown until calendar ingestor added
 		}
-
-		// Compute technical features from price bars
 		computeTechFeatures(&input)
 
+		// Attach fundamentals if available
+		// TODO: load from store.GetFundamentals once implemented
+		inputMap[ticker] = input
 		inputs = append(inputs, input)
 	}
 
-	// Step 3: Score all tickers
+	// Step 3: Score and rank
 	results := scorer.ScoreAll(inputs, horizon, s.cfg.MaxPerSector)
+	if len(results) > s.cfg.ListSize {
+		results = results[:s.cfg.ListSize]
+	}
 
-	// Step 4: Convert to store records and save
+	// Step 4: Generate LLM explanations for top results
+	explanations := s.explainer.ExplainBatch(ctx, results, inputMap, horizon)
+
+	// Step 5: Save to store
 	scores := make([]store.TickerScore, 0, len(results))
 	for i, r := range results {
-		if i >= s.cfg.ListSize {
-			break
-		}
+		exp := explanations[r.Ticker]
+		dataGapsJSON, _ := marshalJSON(r.DataGaps)
+		flagsJSON, _ := marshalJSON(r.Flags)
+
 		scores = append(scores, store.TickerScore{
 			RunID:            runID,
 			Horizon:          horizon,
@@ -145,7 +171,12 @@ func (s *Scheduler) runScoringCtx(ctx context.Context, horizon store.Horizon) er
 			FundamentalScore: r.FundamentalScore,
 			RiskPenalty:      r.RiskPenalty,
 			ConfidenceScore:  r.ConfidenceScore,
+			DataGaps:         dataGapsJSON,
+			Thesis:           exp.Thesis,
+			TradePlanText:    exp.TradePlanText,
+			InvalidationText: exp.InvalidationText,
 			RiskRating:       r.RiskRating,
+			Flags:            flagsJSON,
 		})
 	}
 
@@ -153,30 +184,36 @@ func (s *Scheduler) runScoringCtx(ctx context.Context, horizon store.Horizon) er
 		return fmt.Errorf("failed to save scores: %w", err)
 	}
 
-	slog.Info("scoring run completed", "run_id", runID, "scored", len(scores))
+	slog.Info("scoring run complete", "run_id", runID, "tickers_saved", len(scores))
 	return nil
 }
 
 func (s *Scheduler) ingestNews() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
-	universe := s.getUniverse()
-	if err := s.newsIng.IngestUniverse(ctx, universe, 7); err != nil {
+	if err := s.newsIng.IngestUniverse(ctx, s.getUniverse(), 7); err != nil {
 		slog.Error("news ingestion failed", "error", err)
+	}
+}
+
+func (s *Scheduler) ingestFundamentals() {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
+	defer cancel()
+	if err := s.fundIng.IngestUniverse(ctx, s.getUniverse()); err != nil {
+		slog.Error("fundamentals ingestion failed", "error", err)
 	}
 }
 
 func (s *Scheduler) getUniverse() []string {
 	extra := s.cfg.ExtraUniverseTickers()
-	if len(extra) > 0 {
-		return append(DefaultUniverse, extra...)
+	if len(extra) == 0 {
+		return DefaultUniverse
 	}
-	return DefaultUniverse
+	return append(DefaultUniverse, extra...)
 }
 
-// computeTechFeatures populates technical indicator fields on a TickerInput
-// from its PriceBars. This is a simplified version — production would use
-// a proper TA library.
+// computeTechFeatures populates TickerInput technical indicators from price bars.
+// Production: replace with a proper TA library (markcheno/go-talib).
 func computeTechFeatures(t *scorer.TickerInput) {
 	bars := t.PriceBars
 	n := len(bars)
@@ -184,8 +221,6 @@ func computeTechFeatures(t *scorer.TickerInput) {
 		return
 	}
 
-	// Simple EMA approximation using close prices (most recent first)
-	// In production, use a proper TA library like markcheno/go-talib
 	closes := make([]float64, n)
 	for i, b := range bars {
 		closes[i] = b.Close
@@ -199,7 +234,6 @@ func computeTechFeatures(t *scorer.TickerInput) {
 		t.EMA200 = simpleAvg(closes, 200)
 	}
 
-	// ATR (simplified: average of high-low over 14 days)
 	if n >= 14 {
 		atrSum := 0.0
 		for i := 0; i < 14; i++ {
@@ -211,39 +245,34 @@ func computeTechFeatures(t *scorer.TickerInput) {
 		}
 	}
 
-	// RSI (simplified 14-period)
 	if n >= 15 {
 		gains, losses := 0.0, 0.0
 		for i := 0; i < 14; i++ {
-			diff := closes[i] - closes[i+1] // most recent first
+			diff := closes[i] - closes[i+1]
 			if diff > 0 {
 				gains += diff
 			} else {
 				losses -= diff
 			}
 		}
-		avgGain := gains / 14
-		avgLoss := losses / 14
-		if avgLoss == 0 {
+		if losses == 0 {
 			t.RSI14 = 100
 		} else {
-			rs := avgGain / avgLoss
+			rs := (gains / 14) / (losses / 14)
 			t.RSI14 = 100 - (100 / (1 + rs))
 		}
 	}
 
-	// ROC (10-day)
 	if n >= 11 {
 		t.ROC10 = ((closes[0] - closes[10]) / closes[10]) * 100
 	}
 
-	// Volume
 	if n >= 30 {
-		volSum := 0.0
+		vol := 0.0
 		for i := 0; i < 30; i++ {
-			volSum += float64(bars[i].Volume)
+			vol += float64(bars[i].Volume)
 		}
-		t.AvgVol30d = volSum / 30
+		t.AvgVol30d = vol / 30
 	}
 	if n > 0 {
 		t.CurrentVol = float64(bars[0].Volume)
@@ -267,4 +296,12 @@ func mustLoadLocation(name string) *time.Location {
 		panic(fmt.Sprintf("failed to load timezone %s: %v", name, err))
 	}
 	return loc
+}
+
+func marshalJSON(v interface{}) (string, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "[]", err
+	}
+	return string(b), nil
 }
