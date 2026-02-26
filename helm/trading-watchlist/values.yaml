@@ -48,8 +48,19 @@ secrets:
   finnhubApiKey: ""
   anthropicApiKey: ""
 
-# ── PostgreSQL (Bitnami sub-chart) ────────────────────────
+# ── External Database (reuse existing PostgreSQL in cluster) ──
+# Set url to point at an existing service; leave empty to deploy sub-chart.
+externalDatabase:
+  url: ""
+
+# ── External Redis (reuse existing Redis in cluster) ─────────
+# Set url to point at an existing service; leave empty to deploy sub-chart.
+externalRedis:
+  url: ""
+
+# ── PostgreSQL (Bitnami sub-chart) — disabled when externalDatabase.url is set
 postgresql:
+  enabled: false
   auth:
     username: watchlist
     password: watchlist
@@ -60,8 +71,9 @@ postgresql:
         cpu: 100m
         memory: 128Mi
 
-# ── Redis (Bitnami sub-chart) ─────────────────────────────
+# ── Redis (Bitnami sub-chart) — disabled when externalRedis.url is set
 redis:
+  enabled: false
   architecture: standalone
   auth:
     enabled: false
