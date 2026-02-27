@@ -175,7 +175,14 @@ func (s *Store) SaveScores(ctx context.Context, scores []TickerScore) error {
 // GetWatchlist returns the latest top-N ranked tickers for a horizon.
 func (s *Store) GetWatchlist(ctx context.Context, horizon Horizon, limit int) ([]TickerScore, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT ts.*
+		SELECT
+			ts.id, ts.run_id, ts.horizon, ts.ticker, ts.company_name, ts.sector,
+			ts.rank, ts.composite_score, ts.momentum_score, ts.volatility_score,
+			ts.liquidity_score, ts.catalyst_score, ts.fundamental_score, ts.risk_penalty,
+			ts.confidence_score, ts.data_gaps, ts.thesis, ts.trade_plan_text,
+			ts.invalidation_text, ts.risk_rating, ts.flags,
+			ts.current_price, ts.target_price, ts.stop_price, ts.rr_ratio, ts.upside_pct,
+			ts.technical_snapshot, ts.fundamental_snapshot, ts.news_summary, ts.created_at
 		FROM ticker_scores ts
 		INNER JOIN (
 			SELECT MAX(run_id) AS latest_run FROM ticker_scores WHERE horizon = $1
@@ -215,7 +222,14 @@ func (s *Store) GetWatchlist(ctx context.Context, horizon Horizon, limit int) ([
 func (s *Store) GetTicker(ctx context.Context, horizon Horizon, ticker string) (*TickerScore, error) {
 	var sc TickerScore
 	err := s.db.QueryRow(ctx, `
-		SELECT ts.*
+		SELECT
+			ts.id, ts.run_id, ts.horizon, ts.ticker, ts.company_name, ts.sector,
+			ts.rank, ts.composite_score, ts.momentum_score, ts.volatility_score,
+			ts.liquidity_score, ts.catalyst_score, ts.fundamental_score, ts.risk_penalty,
+			ts.confidence_score, ts.data_gaps, ts.thesis, ts.trade_plan_text,
+			ts.invalidation_text, ts.risk_rating, ts.flags,
+			ts.current_price, ts.target_price, ts.stop_price, ts.rr_ratio, ts.upside_pct,
+			ts.technical_snapshot, ts.fundamental_snapshot, ts.news_summary, ts.created_at
 		FROM ticker_scores ts
 		INNER JOIN (
 			SELECT MAX(run_id) AS latest_run FROM ticker_scores WHERE horizon = $1
