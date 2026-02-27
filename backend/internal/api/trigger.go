@@ -1,6 +1,8 @@
 package api
 
 import (
+	"context"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/xmaeltht/trading-watchlist/internal/store"
 )
@@ -18,7 +20,7 @@ func (s *Server) triggerRun(c *fiber.Ctx) error {
 	}
 
 	go func() {
-		_ = s.sched.RunNow(c.Context(), horizon)
+		_ = s.sched.RunNow(context.Background(), horizon)
 	}()
 
 	return c.JSON(fiber.Map{
